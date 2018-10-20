@@ -31,5 +31,7 @@ DrawOverlayScene(
 );
 
 void Draw();
-void setupMobMenuCheckBox(const char* optionStr, const char* mobName);
-void setupMultiMobMenuCheckBox(const char* optionStr, std::vector<std::string> mobNames[]);
+void setupMobMenuCheckBox(const char* optionStr, const char* mobName, bool loadSettings = false);
+void setupMultiMobMenuCheckBox(const char* optionStr, std::vector<std::string> mobNames[], bool loadSettings = false);
+void LoadSettings();
+float RangeDistance(SDKVECTOR PlayerVec, SDKVECTOR MobVec);

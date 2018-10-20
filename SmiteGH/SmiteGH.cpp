@@ -10,7 +10,13 @@ void* localPlayer = NULL;
 int smiteSlot;
 bool iShowWindow = false;
 std::vector<std::string> mobs_to_attack;
-bool _g_isEnabled = true;
+bool isEnabled = true;
+SDKVECTOR _g_DirectionVector = { 0, 0, 1.f };
+SDKCOLOR _g_ColorBlue = { 255, 0, 0, 255 };
+SDKCOLOR _g_ColorRed = { 0, 0, 255, 255 };
+bool drawRange = true;
+int smiteModifiedRange = 570;
+
 BOOL
 WINAPI
 DllMain(
@@ -28,9 +34,6 @@ DllMain(
 	SDK_EXTRACT_CONTEXT(lpvReserved);
 	if (!SDK_CONTEXT_GLOBAL)
 		return FALSE;
-
-
-
 
 	if (!SDKSTATUS_SUCCESS(SdkNotifyLoadedModule("SmiteGH", SDK_VERSION)))
 	{
@@ -53,19 +56,20 @@ DllMain(
 	if (smiteSlot == 0)
 		return false;
 
+	LoadSettings();
+
 	SdkUiConsoleWrite("Found Smite SLot: %d", smiteSlot);
-
 	SdkRegisterOverlayScene(DrawOverlayScene, NULL);
-
 	SdkRegisterGameScene(DrawGameScene, NULL);
 
+	SdkUiConsoleWrite("SmiteGH Loaded!", smiteSlot);
 	return TRUE;
 }
 bool exists(std::string const & user_input,
 	std::vector<std::string> const & words)
 {
-	for (int i = 0; i < words.size(); i++)
-		if (user_input == words[i])
+	for (const auto& word : words)
+		if (user_input == word)
 			return true;
 	return false;
 }
@@ -80,10 +84,11 @@ DrawOverlayScene(
 }
 void Draw()
 {
-	static bool isEnabled = true;
-	SdkUiCheckbox("Enabled", &isEnabled, NULL);
 
-	bool Expanded = false;
+	SdkUiCheckbox("Enabled", &isEnabled, NULL);
+	SdkUiCheckbox("Draw Smite Range", &drawRange, NULL);
+
+	bool Expanded = true;
 	SdkUiBeginTree("Mobs To Smite", &Expanded);
 	if (Expanded)
 	{
@@ -114,8 +119,8 @@ void Draw()
 		setupMobMenuCheckBox("Raptor", "SRU_Razorbeak");
 		SdkUiEndTree();
 	}
-	SdkSetSettingBool("Enabled", &isEnabled);
-	_g_isEnabled = isEnabled;
+	SdkSetSettingBool("Enabled", isEnabled);
+	SdkSetSettingBool("Draw Smite Range", drawRange);
 }
 void
 __cdecl
@@ -136,8 +141,23 @@ AwObjectLoop(
 {
 	UNREFERENCED_PARAMETER(UserData);
 
-	if (!_g_isEnabled)
+	if (!isEnabled)
 		return true;
+
+	if (drawRange && localPlayer == Object)
+	{
+		SDKVECTOR localPlayerPos;
+		SdkGetObjectPosition(localPlayer, &localPlayerPos);
+		SDK_SPELL smiteSpell;
+		SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
+		float GameTime;
+		SdkGetGameTime(&GameTime);
+		bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime;
+		if (canCast)
+			SdkDrawCircle(&localPlayerPos, smiteModifiedRange, &_g_ColorBlue, 0, &_g_DirectionVector);
+		else
+			SdkDrawCircle(&localPlayerPos, smiteModifiedRange, &_g_ColorRed, 0, &_g_DirectionVector);
+	}
 
 	if (!SDKSTATUS_SUCCESS(SdkIsObjectMinion(Object)))
 		return true;
@@ -155,33 +175,42 @@ AwObjectLoop(
 	SDKVECTOR Position;
 	SdkGetObjectPosition(Object, &Position);
 
-
 	SmiteProcess(Object, Position);
 
 	return true;
 }
 
+
 void
 SmiteProcess(
-	_In_		     void* Object,
+	_In_		     void* Mob,
 	_In_		     SDKVECTOR& Position
 )
 {
 	const char* mobName;
-	SdkGetAIName(Object, &mobName);
+	SdkGetAIName(Mob, &mobName);
 	if (!exists(mobName, mobs_to_attack))
 		return;
 
 	SDK_HEALTH Health;
-	SdkGetUnitHealth(Object, &Health);
-	bool canCast = false;
-	SdkCanAICast(Object, &canCast);
+	SdkGetUnitHealth(Mob, &Health);
 
-	if (canCast && Health.Current <= GetSmiteDamage())
-	{
-		//SdkUiConsoleWrite("Can Attack %d", Health.Current);
-		SdkCastSpellLocalPlayer(Object, NULL, (unsigned char)smiteSlot, SPELL_CAST_START);
-	}
+	SDK_SPELL smiteSpell;
+	SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
+	float GameTime;
+	SdkGetGameTime(&GameTime);
+	bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime;
+
+	SDKVECTOR posForLocalPlayer;
+	SdkGetObjectPosition(localPlayer, &posForLocalPlayer);
+
+	SDKBOX posForBoundingBoxForMob;
+	SdkGetObjectBoundingBox(Mob, &posForBoundingBoxForMob);
+
+	float range = RangeDistance(posForLocalPlayer, posForBoundingBoxForMob.Max);
+
+	if (canCast && Health.Current <= GetSmiteDamage() && range <= 500)
+		SdkCastSpellLocalPlayer(Mob, NULL, (unsigned char)smiteSlot, SPELL_CAST_START);
 }
 
 int GetSmiteDamage()
@@ -190,7 +219,7 @@ int GetSmiteDamage()
 	if (!SDKSTATUS_SUCCESS(SdkGetHeroExperience(localPlayer, NULL, &Level)))
 	{
 		SdkUiConsoleWrite("Couldn't get level..");
-		_g_isEnabled = false;
+		isEnabled = false;
 		return 0;
 	}
 	int CalcSmiteDamage[] = {
@@ -202,11 +231,12 @@ int GetSmiteDamage()
 	return *std::max_element(CalcSmiteDamage, CalcSmiteDamage + 4);
 }
 
-void setupMobMenuCheckBox(const char* optionStr, const char* mobName)
+void setupMobMenuCheckBox(const char* optionStr, const char* mobName, bool loadSettings)
 {
 	bool static isChecked = true;
 	SdkGetSettingBool(optionStr, &isChecked, true);
-	SdkUiCheckbox(optionStr, &isChecked, NULL);
+	if (!loadSettings)
+		SdkUiCheckbox(optionStr, &isChecked, NULL);
 	if (isChecked)
 	{
 		const std::string mob = mobName;
@@ -225,23 +255,23 @@ void setupMobMenuCheckBox(const char* optionStr, const char* mobName)
 	SdkSetSettingBool(optionStr, isChecked);
 }
 
-void setupMultiMobMenuCheckBox(const char* optionStr, std::vector<std::string> mobNames[])
+void setupMultiMobMenuCheckBox(const char* optionStr, std::vector<std::string> mobNames[], bool loadSettings)
 {
 	bool static isChecked = true;
 	SdkGetSettingBool(optionStr, &isChecked, true);
-	SdkUiCheckbox(optionStr, &isChecked, NULL);
-	for (auto i = 0; i < mobNames->size(); i++)
+	if (!loadSettings)
+		SdkUiCheckbox(optionStr, &isChecked, NULL);
+	for (const auto& mobName : *mobNames)
 	{
 		if (isChecked)
 		{
-			const std::string mob = mobNames->at(i);
+			const std::string mob = mobName;
 			if (!exists(mob, mobs_to_attack))
 				mobs_to_attack.push_back(mob);
-
 		}
 		else
 		{
-			const std::string mob = mobNames->at(i);
+			const std::string mob = mobName;
 			if (exists(mob, mobs_to_attack))
 			{
 				const auto result = find(mobs_to_attack.begin(), mobs_to_attack.end(), mob);
@@ -250,4 +280,33 @@ void setupMultiMobMenuCheckBox(const char* optionStr, std::vector<std::string> m
 		}
 	}
 	SdkSetSettingBool(optionStr, isChecked);
+}
+
+void LoadSettings()
+{
+	std::vector<std::string> Dragons;
+	Dragons.emplace_back("SRU_Dragon_Elder");
+	Dragons.emplace_back("SRU_Dragon_Air");
+	Dragons.emplace_back("SRU_Dragon_Earth");
+	Dragons.emplace_back("SRU_Dragon_Fire");
+	Dragons.emplace_back("SRU_Dragon_Water");
+
+	setupMobMenuCheckBox("Baron", "SRU_Baron", true);
+	setupMobMenuCheckBox("Rift Herald", "SRU_RiftHerald", true);
+	setupMultiMobMenuCheckBox("All Dragons", &Dragons, true);
+	setupMobMenuCheckBox("Blue Buff", "SRU_Blue", true);
+	setupMobMenuCheckBox("Red Buff", "SRU_Red", true);
+	setupMobMenuCheckBox("Gromp", "SRU_Gromp", true);
+	setupMobMenuCheckBox("Murk Wolfs", "SRU_Murkwolf", true);
+	setupMobMenuCheckBox("Krug", "SRU_Krug", true);
+	setupMobMenuCheckBox("Crab", "Sru_Crab", true);
+	setupMobMenuCheckBox("Raptor", "SRU_Razorbeak", true);
+
+	SdkGetSettingBool("Enabled", &isEnabled, true);
+	SdkGetSettingBool("Draw Smite Range", &drawRange, true);
+}
+
+float RangeDistance(SDKVECTOR PlayerVec, SDKVECTOR MobVec)
+{
+	return sqrt(pow(PlayerVec.x - MobVec.x, 2) + pow(PlayerVec.y - MobVec.y, 2) + pow(PlayerVec.z - MobVec.z, 2));
 }
