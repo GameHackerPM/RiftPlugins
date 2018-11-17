@@ -11,8 +11,9 @@ DrawGameScene(
 bool 
 __cdecl 
 AwObjectLoop(
-	_In_ void* Object, 
-	_In_opt_ void* UserData
+	_In_		     void* Object,
+	_In_opt_         unsigned int NetworkID,
+	_In_opt_		     void* UserData
 );
  
 void 

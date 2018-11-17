@@ -4,6 +4,7 @@
 #include <vector>
 #include "SmiteGH.h"
 #include <algorithm>
+#include <sstream>
 
 PSDK_CONTEXT SDK_CONTEXT_GLOBAL;
 void* localPlayer = NULL;
@@ -27,7 +28,6 @@ DllMain(
 {
 	UNREFERENCED_PARAMETER(hinstDLL);
 
-
 	if (fdwReason != DLL_PROCESS_ATTACH)
 		return TRUE;
 
@@ -42,19 +42,22 @@ DllMain(
 
 	SdkGetLocalPlayer(&localPlayer);
 
-	for (uint8_t i = 0; i < SPELL_SLOT_MAX; ++i)
+
+	for (int i = 4; i < 6; ++i)
 	{
 		SDK_SPELL Spell;
 		SdkGetAISpell(localPlayer, i, &Spell);
 
-		if (strcmp(Spell.DisplayName, "game_spell_displayname_SummonerSmite") == 0)
+		if (strcmp(Spell.ScriptName, "SummonerSmite") == 0)
 		{
 			smiteSlot = Spell.Slot;
 			break;
 		}
 	}
 	if (smiteSlot == 0)
+	{
 		return false;
+	}
 
 	LoadSettings();
 
@@ -136,9 +139,11 @@ bool
 __cdecl
 AwObjectLoop(
 	_In_		     void* Object,
+	_In_opt_         unsigned int NetworkID,
 	_In_opt_		     void* UserData
 )
 {
+	UNREFERENCED_PARAMETER(NetworkID);
 	UNREFERENCED_PARAMETER(UserData);
 
 	if (!isEnabled)
@@ -152,7 +157,9 @@ AwObjectLoop(
 		SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
 		float GameTime;
 		SdkGetGameTime(&GameTime);
-		bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime;
+		int CheckForSmite;
+		SdkCanAICastSpell(localPlayer, smiteSlot, NULL, &CheckForSmite);
+		bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime && CheckForSmite == SPELL_CAN_CAST_OK;
 		if (canCast)
 			SdkDrawCircle(&localPlayerPos, smiteModifiedRange, &_g_ColorBlue, 0, &_g_DirectionVector);
 		else
@@ -199,7 +206,11 @@ SmiteProcess(
 	SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
 	float GameTime;
 	SdkGetGameTime(&GameTime);
-	bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime;
+	int CheckForSmite;
+	bool alreadyCasted;
+	SdkCanAICastSpell(localPlayer, smiteSlot, &alreadyCasted, &CheckForSmite);
+	bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime && CheckForSmite == SPELL_CAN_CAST_OK
+		&& !alreadyCasted;
 
 	SDKVECTOR posForLocalPlayer;
 	SdkGetObjectPosition(localPlayer, &posForLocalPlayer);
