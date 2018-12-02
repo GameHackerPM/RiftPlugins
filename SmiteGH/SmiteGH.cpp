@@ -1,13 +1,12 @@
+#define _ITERATOR_DEBUG_LEVEL  0
 #include <Windows.h>
 #include "../../sdkapi.h"
 #include <string>
 #include <vector>
 #include "SmiteGH.h"
-#include <algorithm>
-#include <sstream>
 
 PSDK_CONTEXT SDK_CONTEXT_GLOBAL;
-void* localPlayer = NULL;
+void* _localPlayer = NULL;
 int smiteSlot;
 bool iShowWindow = false;
 std::vector<std::string> mobs_to_attack;
@@ -39,33 +38,41 @@ DllMain(
 	{
 		return FALSE;
 	}
-
-	SdkGetLocalPlayer(&localPlayer);
-
-
-	for (int i = 4; i < 6; ++i)
-	{
-		SDK_SPELL Spell;
-		SdkGetAISpell(localPlayer, i, &Spell);
-
-		if (strcmp(Spell.ScriptName, "SummonerSmite") == 0)
+	SdkRegisterOnLoad
+	(
+		[](void* UserData) -> void
 		{
-			smiteSlot = Spell.Slot;
-			break;
-		}
-	}
-	if (smiteSlot == 0)
-	{
-		return false;
-	}
+			UNREFERENCED_PARAMETER(UserData);
 
-	LoadSettings();
+			SdkGetLocalPlayer(&_localPlayer);
+			for (int i = 4; i < 6; ++i)
+			{
+				SDK_SPELL Spell;
+				SdkGetAISpell(_localPlayer, i, &Spell);
 
-	SdkUiConsoleWrite("Found Smite SLot: %d", smiteSlot);
-	SdkRegisterOverlayScene(DrawOverlayScene, NULL);
-	SdkRegisterGameScene(DrawGameScene, NULL);
+				if (strcmp(Spell.ScriptName, "SummonerSmite") == 0)
+				{
+					smiteSlot = Spell.Slot;
+					break;
+				}
+			}
+			if (smiteSlot == 0)
+			{
+				SdkUiConsoleWrite("Couldn't find smite!");
+				return;
+			}
 
-	SdkUiConsoleWrite("SmiteGH Loaded!", smiteSlot);
+			LoadSettings();
+
+			SdkUiConsoleWrite("Found Smite SLot: %d", smiteSlot);
+			SdkRegisterOverlayScene(DrawOverlayScene, NULL);
+			SdkRegisterGameScene(DrawGameScene, NULL);
+
+			SdkUiConsoleWrite("SmiteGH Loaded!", smiteSlot);
+		}, NULL
+	);
+
+
 	return TRUE;
 }
 bool exists(std::string const & user_input,
@@ -87,7 +94,6 @@ DrawOverlayScene(
 }
 void Draw()
 {
-
 	SdkUiCheckbox("Enabled", &isEnabled, NULL);
 	SdkUiCheckbox("Draw Smite Range", &drawRange, NULL);
 
@@ -120,10 +126,15 @@ void Draw()
 		setupMobMenuCheckBox("Crab", "Sru_Crab");
 
 		setupMobMenuCheckBox("Raptor", "SRU_Razorbeak");
+		bool saveBtnClicked;
+		SdkUiButton("Save Settings", &saveBtnClicked);
+		if (saveBtnClicked)
+		{
+			SdkSetSettingBool("Enabled", isEnabled);
+			SdkSetSettingBool("Draw Smite Range", drawRange);
+		}
 		SdkUiEndTree();
 	}
-	SdkSetSettingBool("Enabled", isEnabled);
-	SdkSetSettingBool("Draw Smite Range", drawRange);
 }
 void
 __cdecl
@@ -149,17 +160,17 @@ AwObjectLoop(
 	if (!isEnabled)
 		return true;
 
-	if (drawRange && localPlayer == Object)
+	if (drawRange && _localPlayer == Object)
 	{
 		SDKVECTOR localPlayerPos;
-		SdkGetObjectPosition(localPlayer, &localPlayerPos);
+		SdkGetObjectPosition(_localPlayer, &localPlayerPos);
 		SDK_SPELL smiteSpell;
-		SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
+		SdkGetAISpell(_localPlayer, smiteSlot, &smiteSpell);
 		float GameTime;
 		SdkGetGameTime(&GameTime);
 		int CheckForSmite;
-		SdkCanAICastSpell(localPlayer, smiteSlot, NULL, &CheckForSmite);
-		bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime && CheckForSmite == SPELL_CAN_CAST_OK;
+		SdkCanAICastSpell(_localPlayer, smiteSlot, NULL, &CheckForSmite);
+		bool canCast = CheckForSmite == SPELL_CAN_CAST_OK;
 		if (canCast)
 			SdkDrawCircle(&localPlayerPos, smiteModifiedRange, &_g_ColorBlue, 0, &_g_DirectionVector);
 		else
@@ -203,17 +214,15 @@ SmiteProcess(
 	SdkGetUnitHealth(Mob, &Health);
 
 	SDK_SPELL smiteSpell;
-	SdkGetAISpell(localPlayer, smiteSlot, &smiteSpell);
+	SdkGetAISpell(_localPlayer, smiteSlot, &smiteSpell);
 	float GameTime;
 	SdkGetGameTime(&GameTime);
 	int CheckForSmite;
-	bool alreadyCasted;
-	SdkCanAICastSpell(localPlayer, smiteSlot, &alreadyCasted, &CheckForSmite);
-	bool canCast = smiteSpell.CurrentAmmo > 0 && smiteSpell.CooldownExpires <= GameTime && CheckForSmite == SPELL_CAN_CAST_OK
-		&& !alreadyCasted;
+	SdkCanAICastSpell(_localPlayer, smiteSlot, NULL, &CheckForSmite);
+	bool canCast = CheckForSmite == SPELL_CAN_CAST_OK;
 
 	SDKVECTOR posForLocalPlayer;
-	SdkGetObjectPosition(localPlayer, &posForLocalPlayer);
+	SdkGetObjectPosition(_localPlayer, &posForLocalPlayer);
 
 	SDKBOX posForBoundingBoxForMob;
 	SdkGetObjectBoundingBox(Mob, &posForBoundingBoxForMob);
@@ -223,11 +232,20 @@ SmiteProcess(
 	if (canCast && Health.Current <= GetSmiteDamage() && range <= 500)
 		SdkCastSpellLocalPlayer(Mob, NULL, (unsigned char)smiteSlot, SPELL_CAST_START);
 }
-
+int MaxElement(int arr[], int size)
+{
+	int Max = arr[0];
+	for (int i = 1; i < size; i++)
+	{
+		if (arr[i] > Max)
+			Max = arr[i];
+	}
+	return Max;
+}
 int GetSmiteDamage()
 {
 	int Level = 1;
-	if (!SDKSTATUS_SUCCESS(SdkGetHeroExperience(localPlayer, NULL, &Level)))
+	if (!SDKSTATUS_SUCCESS(SdkGetHeroExperience(_localPlayer, NULL, &Level)))
 	{
 		SdkUiConsoleWrite("Couldn't get level..");
 		isEnabled = false;
@@ -239,7 +257,7 @@ int GetSmiteDamage()
 		40 * Level + 240,
 		50 * Level + 100
 	};
-	return *std::max_element(CalcSmiteDamage, CalcSmiteDamage + 4);
+	return MaxElement(CalcSmiteDamage, 4);
 }
 
 void setupMobMenuCheckBox(const char* optionStr, const char* mobName, bool loadSettings)
